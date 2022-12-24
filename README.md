@@ -1,7 +1,7 @@
 
 # Android String Convertor
 
-=================
+command-line tool to convert android xml string to arb.
 
 ## Usage
 
