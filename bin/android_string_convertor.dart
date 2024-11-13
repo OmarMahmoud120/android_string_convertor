@@ -8,35 +8,58 @@ final args.ArgParser argumentParser = args.ArgParser()
   ..addOption(
     'prefix',
     abbr: 'p',
-    help: 'prefix file name',
+    help: 'Prefix for output file name',
     defaultsTo: 'app_',
   )
   ..addFlag(
     'sort',
     abbr: 's',
-    help: 'Sort by key name.',
+    help: 'Sort the output by key name',
   )
   ..addFlag(
     'directory',
     abbr: 'd',
-    help: 'Path is directory',
+    help: 'Input is a directory containing XML files',
+  )
+  ..addOption(
+    'output-dir',
+    abbr: 'o',
+    help: 'Output directory for ARB files (default is same as input directory)',
+    defaultsTo: '',
   );
 
 void printUsage() {
-  stdout.writeln('Usage: string converter [options] {files}');
+  stdout.writeln('Usage: android-string-converter [options] {files|directory}');
   stdout.writeln();
   stdout.writeln(argumentParser.usage);
   exit(1);
 }
 
 void main(List<String> arguments) {
-  final files = <File>[];
   final results = argumentParser.parse(arguments);
   final prefix = results['prefix'] as String;
   final sort = results['sort'] as bool;
   final isDirectory = results['directory'] as bool;
+  final outputDir = results['output-dir'] as String;
+
+  final files = getInputFiles(results.rest, isDirectory);
+  if (files.isEmpty) {
+    printUsage();
+  }
+
+  for (final file in files) {
+    final outfile = getOutputFile(file, prefix, outputDir);
+    final document = XmlDocument.parse(file.readAsStringSync());
+    final out = extractStringsFromXml(document, sort);
+    stdout.writeln("Writing to $outfile");
+    outfile.writeAsStringSync(JsonEncoder.withIndent("   ").convert(out));
+  }
+}
+
+List<File> getInputFiles(List<String> paths, bool isDirectory) {
+  final files = <File>[];
   if (isDirectory) {
-    final dir = Directory(results.rest.first);
+    final dir = Directory(paths.first);
     if (!dir.existsSync()) {
       stderr.writeln('Directory not found: $dir');
       exit(2);
@@ -48,8 +71,8 @@ void main(List<String> arguments) {
       files.add(File(element.path));
     });
   } else {
-    for (final argument in results.rest) {
-      final file = File(argument);
+    for (final path in paths) {
+      final file = File(path);
       if (file.existsSync()) {
         files.add(file);
       } else {
@@ -58,36 +81,35 @@ void main(List<String> arguments) {
       }
     }
   }
+  return files;
+}
 
-  if (files.isEmpty) {
-    printUsage();
-  }
-  stdout.writeln("file ${files.length}");
-
-  for (final file in files) {
-    var path = file.parent.path +
-        Platform.pathSeparator +
-        prefix +
-        file.uri.pathSegments.last.replaceAll(".xml", ".arb");
-
-    final outfile = File(path);
-    final document = XmlDocument.parse(file.readAsStringSync());
-    Map<String, String> out = {};
-    for (final child in document.rootElement.children) {
-      if (child.attributes.isNotEmpty) {
-        final n = child.attributes
-            .firstWhere((element) => element.name.local == "name");
-        var key = '${n.value[0].toLowerCase()}${n.value.substring(1)}';
-        out[key] = child.innerText;
-      }
+File getOutputFile(File inputFile, String prefix, String outputDir) {
+  if (outputDir.isNotEmpty) {
+    final dir = Directory(outputDir);
+    if (!dir.existsSync()) {
+      dir.createSync();
     }
-    if (sort) {
-      out = Map.fromEntries(
-          out.entries.toList()..sort((e1, e2) => e1.key.compareTo(e2.key)));
-    }
-    stdout.writeln("outfile ${outfile.path}");
-    final encoder = JsonEncoder.withIndent("   ");
-    final srt = encoder.convert(out);
-    outfile.writeAsStringSync(srt);
   }
+  final outputPath = outputDir.isNotEmpty
+      ? '${outputDir.replaceAll('\\', '/')}/$prefix${inputFile.uri.pathSegments.last.replaceAll(".xml", ".arb")}'
+      : '${inputFile.parent.path}/$prefix${inputFile.uri.pathSegments.last.replaceAll(".xml", ".arb")}';
+  return File(outputPath);
+}
+
+Map<String, String> extractStringsFromXml(XmlDocument document, bool sort) {
+  final out = <String, String>{};
+  for (final child in document.rootElement.children) {
+    if (child.attributes.isNotEmpty) {
+      final n = child.attributes
+          .firstWhere((element) => element.name.local == "name");
+      var key = '${n.value[0].toLowerCase()}${n.value.substring(1)}';
+      out[key] = child.innerText;
+    }
+  }
+  if (sort) {
+    return Map.fromEntries(
+        out.entries.toList()..sort((e1, e2) => e1.key.compareTo(e2.key)));
+  }
+  return out;
 }
